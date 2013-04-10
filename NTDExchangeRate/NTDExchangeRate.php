@@ -7,8 +7,10 @@
 * web: http://blog.visioncan.com/
 * 
 * Flag icons made by www.IconDrawer.com
+* Workflows Utility Class credit by David Ferguson (@jdfwarrior)
 * 
 */
+require_once('workflows.php');
 
 class NTDExchangeRate
 {
@@ -18,6 +20,7 @@ class NTDExchangeRate
 	private $csvDate;
 	private $csvOutput;
 	private $exRateData;
+	private $workflows;
 	private $Currency = array(
 		'AUD' => array(
 			'name' => '澳幣',
@@ -104,6 +107,7 @@ class NTDExchangeRate
 
 	public function __construct()
 	{
+		$this->workflows = new Workflows();
 		$this->getBotWebPage();
 	}
 
@@ -129,6 +133,7 @@ class NTDExchangeRate
 			$this->printError('NO_MATCH_ELEMENT');
 		}
 		
+		$botHTML = null;
 		preg_match('/date=(.*):/', $this->csvUrl, $match_date);
 		$this->csvDate = preg_replace('/T/', ' ', $match_date[1]);
 		$this->getCSVAndConvert();
@@ -137,16 +142,18 @@ class NTDExchangeRate
 	private function getCSVAndConvert()
 	{
 		$this->csvOutput = $this->curlGet(self::BOT_HOST . $this->csvUrl);
-		$this->exRateData = $this->convertCsv();
-		// 很抱歉，本次查詢找不到任何一筆資料！
-		// print_r($this->exRateData);
-		foreach ($this->exRateData as $key => $val) {
-			echo $key.'<br>';
+		if ($this->csvOutput != '很抱歉，本次查詢找不到任何一筆資料！')
+		{
+			$this->exRateData = $this->convertCsv();
+		}
+		else
+		{
+			$this->printError('NO_RESULT', $this->csvOutput);
 		}
 	}
 
 	/**
-	 * curl web data
+	 * read web data
 	 * @param  string $url
 	 * @return string $output
 	 */
@@ -162,10 +169,11 @@ class NTDExchangeRate
 		);
 		curl_setopt_array($ch, $options);
 		$output = curl_exec($ch);
+		$error  = curl_error($ch);
 		curl_close($ch);
-		if (empty($output))
+		if ($error)
 		{
-			$this->printError('EMPTY_CURL');
+			$this->printError('CURL_ERROR', $error);
 		}
 		else
 		{
@@ -191,10 +199,15 @@ class NTDExchangeRate
 		return $result;
 	}
 
-	private function printError($err)
+	/**
+	 * Print Error
+	 * @param  String $err  Error String type
+	 * @param  String $info deisplay error information , default is null
+	 */
+	private function printError($err, $info = null)
 	{
 		switch ($err) {
-			case 'EMPTY_CURL':
+			case 'CURL_ERROR':
 				print_r('Curl Error: empty');
 				break;
 			case 'NO_MATCH_HREF':
@@ -203,45 +216,33 @@ class NTDExchangeRate
 			case 'NO_MATCH_ELEMENT':
 				print_r('Match Error: not match element');
 				break;
+			case 'NO_RESULT':
+				# code...
+				break;
 		}
 		exit;
 	}
 
-	private function creatXml()
+	public function pAllExRate()
 	{
+		$results = array();
+		$items = array();
+		foreach ($this->exRateData as $key => $val) {
+			$items[] = array(
+				'uid'      => $key,
+				'arg'      => $key,
+				'title'    =>  '⬆🔼⏬'. $val['Selling'][0],
+				'subtitle' => $this->Currency[$key]['name'] . ' 前10天：' . $val['Selling'][2],
+				'icon'     => 'flags/' . $this->Currency[$key]['flag']
+			);
+		}
+		//array_push( $results, $items );
+		//print_r($items);
+		echo $this->workflows->toxml( $items );
 	}
 }
 
 
 $rate = new NTDExchangeRate();
-
-
-// [幣別] => Array
-//        (
-//            [Buying] => Array
-//                (
-//                    [0] => 現金
-//                    [1] => 即期
-//                    [2] => 遠期10天
-//                    [3] => 遠期30天
-//                    [4] => 遠期60天
-//                    [5] => 遠期90天
-//                    [6] => 遠期120天
-//                    [7] => 遠期150天
-//                    [8] => 遠期180天
-//                )
-
-//            [Selling] => Array
-//                (
-//                    [0] => 現金
-//                    [1] => 即期
-//                    [2] => 遠期10天
-//                    [3] => 遠期30天
-//                    [4] => 遠期60天
-//                    [5] => 遠期90天
-//                    [6] => 遠期120天
-//                    [7] => 遠期150天
-//                    [8] => 遠期180天
-//                )
-//        )
+$rate ->pAllExRate();
 ?>
