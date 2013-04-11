@@ -16,11 +16,10 @@ class NTDExchangeRate
 {
 	const BOT_HOST   = 'http://rate.bot.com.tw';
 	private $rateUrl = '/Pages/Static/UIP003.zh-TW.htm';
-	private $csvUrl;
 	private $csvDate;
-	private $csvOutput;
-	private $exRateData;
+	private $exchangeData;
 	private $workflows;
+	private $outputItems = array(); // for Alfred
 	private $Currency = array(
 		'AUD' => array(
 			'name' => '澳幣',
@@ -104,14 +103,26 @@ class NTDExchangeRate
 		)
 	);
 
+	//HTML Entity (hex)
+	private $emo = array(
+		'up' => '&#x1f53c;',
+		'down' => '&#x1f53d;'
+	);
 
-	public function __construct()
+	public function __construct($currency = null)
 	{
 		$this->workflows = new Workflows();
-		$this->getBotWebPage();
+		if ($currency == null)
+		{
+			$this->getAllExchange();
+		}
+		else if(strlen($currency) == 3 && array_key_exists(strtoupper($currency), $this->Currency))
+		{
+			$this->generateExchangeBy(strtoupper($currency));
+		}
 	}
 
-	private function getBotWebPage()
+	private function getAllExchange()
 	{
 		$botHTML = $this->curlGet(self::BOT_HOST . $this->rateUrl);
 
@@ -121,7 +132,7 @@ class NTDExchangeRate
 			$resint2 = preg_match('/\.href ?= ?\'(.+)\'/', $match1[0], $match2);
 			if ($resint1 !== 0)
 			{
-				$this->csvUrl = $match2[1];
+				$csvUrl = $match2[1];
 			}
 			else
 			{
@@ -133,23 +144,40 @@ class NTDExchangeRate
 			$this->printError('NO_MATCH_ELEMENT');
 		}
 		
-		$botHTML = null;
-		preg_match('/date=(.*):/', $this->csvUrl, $match_date);
+		//date
+		preg_match('/date=(.*):/', $csvUrl, $match_date);
 		$this->csvDate = preg_replace('/T/', ' ', $match_date[1]);
-		$this->getCSVAndConvert();
-	}
-	
-	private function getCSVAndConvert()
-	{
-		$this->csvOutput = $this->curlGet(self::BOT_HOST . $this->csvUrl);
-		if ($this->csvOutput != '很抱歉，本次查詢找不到任何一筆資料！')
+
+		//get csv and convert
+		$csvOutput = $this->curlGet(self::BOT_HOST . $csvUrl);
+		if ($csvOutput == '很抱歉，本次查詢找不到任何一筆資料！')
 		{
-			$this->exRateData = $this->convertCsv();
+			$this->printError('NO_RESULT', $csvOutput);
 		}
 		else
 		{
-			$this->printError('NO_RESULT', $this->csvOutput);
+			$this->exchangeData = $this->convertAllCsv($csvOutput);
 		}
+		$botHTML = $csvOutput = null;
+		$this->generateAllExchange();
+	}
+
+	/**
+	 * convert Exchange Rate Csv to array
+	 * @return array
+	 */
+	private function convertAllCsv($csv)
+	{
+		$result;
+		$wholeCSV = str_getcsv($csv, "\n");
+		for ($i = 1; $i < sizeof($wholeCSV); $i++) { 
+			$row = explode(",", preg_replace('/\s+/', '', $wholeCSV[$i]));
+			$result[array_shift($row)] = array(
+				'Buying'  => array_slice($row, 1, 9),
+				'Selling' => array_slice($row, 11, 9)
+			);
+		}
+		return $result;
 	}
 
 	/**
@@ -182,24 +210,6 @@ class NTDExchangeRate
 	}
 
 	/**
-	 * convert Exchange Rate Csv to array
-	 * @return array
-	 */
-	private function convertCsv()
-	{
-		$result;
-		$wholeCSV = str_getcsv($this->csvOutput, "\n");
-		for ($i = 1; $i < sizeof($wholeCSV); $i++) { 
-			$row = explode(",", preg_replace('/\s+/', '', $wholeCSV[$i]));
-			$result[array_shift($row)] = array(
-				'Buying'  => array_slice($row, 1, 9),
-				'Selling' => array_slice($row, 11, 9)
-			);
-		}
-		return $result;
-	}
-
-	/**
 	 * Print Error
 	 * @param  String $err  Error String type
 	 * @param  String $info deisplay error information , default is null
@@ -223,26 +233,48 @@ class NTDExchangeRate
 		exit;
 	}
 
-	public function pAllExRate()
+	/**
+	 * @return string return ios emoji
+	 */
+	private function emoji($symbol)
 	{
-		$results = array();
-		$items = array();
-		foreach ($this->exRateData as $key => $val) {
-			$items[] = array(
+		return html_entity_decode($this->emo[$symbol], ENT_NOQUOTES, 'UTF-8');
+	}
+
+	private function generateAllExchange(){
+		foreach ($this->exchangeData as $key => $val) {
+			$SellingPrice = ((float)$val['Selling'][0] == 0 ? '-' :  (float)$val['Selling'][0]);
+			$BuyingPrice = ((float)$val['Buying'][0] == 0 ? '-' :  (float)$val['Buying'][0]);
+			$this->outputItems[] = array(
 				'uid'      => $key,
 				'arg'      => $key,
-				'title'    =>  '⬆🔼⏬'. $val['Selling'][0],
-				'subtitle' => $this->Currency[$key]['name'] . ' 前10天：' . $val['Selling'][2],
+				'title'    => $SellingPrice,
+				'subtitle' => $this->Currency[$key]['name'] . ' ' . $key .' | 現金賣出：'. $SellingPrice .' 現金買入：'. $BuyingPrice,
 				'icon'     => 'flags/' . $this->Currency[$key]['flag']
 			);
 		}
-		//array_push( $results, $items );
-		//print_r($items);
-		echo $this->workflows->toxml( $items );
+	}
+
+	private function generateExchangeBy($currency){
+		$this->outputItems[0] = array(
+			'uid'      => $currency,
+			'arg'      => $currency,
+			'title'    => $currency,
+			'subtitle' => $currency,
+			'icon'     => 'flags/' . $this->Currency[$currency]['flag']
+		);
+	}
+
+	private function generateError($err){
+
+	}
+
+	/**
+	 * create xml for Alfred
+	 */
+	public function pxml()
+	{
+		echo $this->workflows->toxml( $this->outputItems );
 	}
 }
-
-
-$rate = new NTDExchangeRate();
-$rate ->pAllExRate();
 ?>
