@@ -16,9 +16,12 @@ class NTDExchangeRate
 {
 	const BOT_HOST   = 'http://rate.bot.com.tw';
 	private $rateUrl = '/Pages/Static/UIP003.zh-TW.htm';
-	private $csvDate;
+	private $historyUrl = '/Pages/UIP004/Download0042.ashx?lang=zh-TW&fileType=1&afterOrNot=0&whom=%s&date1=%s&date2=%s';
+	private $csvDate;               //date of exchange rate
 	private $exchangeData;
 	private $workflows;
+	private $past = 9;              // exchange rate at the number of days in the past
+	private $currentCurency = null;
 	private $outputItems = array(); // for Alfred
 	private $Currency = array(
 		'AUD' => array(
@@ -112,13 +115,14 @@ class NTDExchangeRate
 	public function __construct($currency = null)
 	{
 		$this->workflows = new Workflows();
+		$this->currentCurency = strtoupper($currency);
 		if ($currency == null)
 		{
 			$this->getAllExchange();
 		}
-		else if(strlen($currency) == 3 && array_key_exists(strtoupper($currency), $this->Currency))
+		else if(strlen($this->currentCurency) == 3 && array_key_exists($this->currentCurency, $this->Currency))
 		{
-			$this->generateExchangeBy(strtoupper($currency));
+			$this->getExchangeBy($currency);
 		}
 	}
 
@@ -159,7 +163,18 @@ class NTDExchangeRate
 			$this->exchangeData = $this->convertAllCsv($csvOutput);
 		}
 		$botHTML = $csvOutput = null;
-		$this->generateAllExchange();
+		$this->generateExchange();
+	}
+
+	private function getExchangeBy($currency)
+	{
+		$pastDay = date("Ymd", mktime(0, 0, 0, date("m"), date("d") - $this->past, date("Y")));
+		$today = date("Ymd");
+		$pastCSVUrl = sprintf( self::BOT_HOST . $this->historyUrl, $currency, $pastDay, $today);
+		$csvOutput = $this->curlGet($pastCSVUrl);
+		$this->exchangeData = $this->convertAllCsv($csvOutput);
+		// print_r($this->exchangeData[0]['date']);
+		$this->generateExchange();
 	}
 
 	/**
@@ -172,10 +187,19 @@ class NTDExchangeRate
 		$wholeCSV = str_getcsv($csv, "\n");
 		for ($i = 1; $i < sizeof($wholeCSV); $i++) { 
 			$row = explode(",", preg_replace('/\s+/', '', $wholeCSV[$i]));
-			$result[array_shift($row)] = array(
-				'Buying'  => array_slice($row, 1, 9),
-				'Selling' => array_slice($row, 11, 9)
-			);
+			if ($this->currentCurency == null) {
+				$result[array_shift($row)] = array(
+					'Buying'  => array_slice($row, 1, 9),
+					'Selling' => array_slice($row, 11, 9)
+				);
+			}else{
+				$result[] = array(
+					'date'    => array_shift($row),
+					'Buying'  => array_slice($row, 2, 9),
+					'Selling' => array_slice($row, 12, 9)
+				);
+			}
+			
 		}
 		return $result;
 	}
@@ -241,28 +265,36 @@ class NTDExchangeRate
 		return html_entity_decode($this->emo[$symbol], ENT_NOQUOTES, 'UTF-8');
 	}
 
-	private function generateAllExchange(){
-		foreach ($this->exchangeData as $key => $val) {
-			$SellingPrice = ((float)$val['Selling'][0] == 0 ? '-' :  (float)$val['Selling'][0]);
-			$BuyingPrice = ((float)$val['Buying'][0] == 0 ? '-' :  (float)$val['Buying'][0]);
-			$this->outputItems[] = array(
-				'uid'      => $key,
-				'arg'      => $key,
-				'title'    => $SellingPrice,
-				'subtitle' => $this->Currency[$key]['name'] . ' ' . $key .' | 現金賣出：'. $SellingPrice .' 現金買入：'. $BuyingPrice,
-				'icon'     => 'flags/' . $this->Currency[$key]['flag']
-			);
+	private function generateExchange(){
+		if ($this->currentCurency == null) 
+		{
+			foreach ($this->exchangeData as $key => $val)
+			{
+				$SellingPrice = ((float)$val['Selling'][0] == 0 ? '-' :  (float)$val['Selling'][0]);
+				$BuyingPrice = ((float)$val['Buying'][0] == 0 ? '-' :  (float)$val['Buying'][0]);
+				$this->outputItems[] = array(
+					'uid'      => $key,
+					'arg'      => $key,
+					'title'    => $SellingPrice,
+					'subtitle' => $this->Currency[$key]['name'] . ' ' . $key .' | 現金賣出：'. $SellingPrice .' 現金買入：'. $BuyingPrice,
+					'icon'     => 'flags/' . $this->Currency[$key]['flag']
+				);
+			}
 		}
-	}
-
-	private function generateExchangeBy($currency){
-		$this->outputItems[0] = array(
-			'uid'      => $currency,
-			'arg'      => $currency,
-			'title'    => $currency,
-			'subtitle' => $currency,
-			'icon'     => 'flags/' . $this->Currency[$currency]['flag']
-		);
+		else
+		{
+			foreach ($this->exchangeData as $key => $val)
+			{
+				$this->outputItems[] = array(
+					'uid'      => $this->currentCurency,
+					'arg'      => $this->currentCurency,
+					'title'    => $val['Selling'][0],
+					'subtitle' => $val['date'],
+					'icon'     => 'flags/' . $this->Currency[$this->currentCurency]['flag']
+				);
+			}
+		}
+		
 	}
 
 	private function generateError($err){
@@ -277,4 +309,8 @@ class NTDExchangeRate
 		echo $this->workflows->toxml( $this->outputItems );
 	}
 }
+
+// header("Content-type: text/xml; charset=utf-8"); 
+// $r = new NTDExchangeRate('usd');
+// $r->pxml();
 ?>
