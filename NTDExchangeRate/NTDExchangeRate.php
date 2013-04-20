@@ -5,9 +5,10 @@
 * 
 * Author: visioncan@gmail.com
 * web: http://blog.visioncan.com/
+* Version 1.0
 * 
 * Flag icons made by www.IconDrawer.com
-* Workflows Utility Class credit by David Ferguson (@jdfwarrior)
+* Workflows Library by David Ferguson (@jdfwarrior)
 * 
 */
 require_once('workflows.php');
@@ -338,8 +339,4 @@ class NTDExchangeRate
 		echo $this->workflows->toxml( $this->outputItems );
 	}
 }
-
-// header("Content-type: text/xml; charset=utf-8"); 
-// $r = new NTDExchangeRate('usd');
-// $r->pxml();
 ?>
