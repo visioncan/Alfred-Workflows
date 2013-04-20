@@ -6,3 +6,4 @@ config.rb
 Workflows
 note.TODO
 test
+*.psd

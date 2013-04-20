@@ -1,7 +1,7 @@
 <?php
 
 /**
-* get NTD Exchange Rate form Bank Of Taiwan
+* Fetch NTD Foreign Exchange Rate from Bank Of Taiwan
 * 
 * Author: visioncan@gmail.com
 * web: http://blog.visioncan.com/
@@ -15,8 +15,9 @@ require_once('workflows.php');
 class NTDExchangeRate
 {
 	const BOT_HOST   = 'http://rate.bot.com.tw';
-	private $rateUrl = '/Pages/Static/UIP003.zh-TW.htm';
-	private $historyUrl = '/Pages/UIP004/Download0042.ashx?lang=zh-TW&fileType=1&afterOrNot=0&whom=%s&date1=%s&date2=%s';
+	const RATE_URL = '/Pages/Static/UIP003.zh-TW.htm';
+	const HISTORY_CSV = '/Pages/UIP004/Download0042.ashx?lang=zh-TW&fileType=1&afterOrNot=0&whom=%s&date1=%s&date2=%s';
+	const HISTORY_LINK = '/Pages/UIP004/UIP004INQ1.aspx?lang=zh-TW&whom3=%s';
 	private $csvDate;               //date of exchange rate
 	private $exchangeData;
 	private $workflows;
@@ -114,21 +115,22 @@ class NTDExchangeRate
 
 	public function __construct($currency = null)
 	{
+		date_default_timezone_set('Asia/Taipei');
 		$this->workflows = new Workflows();
-		$this->currentCurency = strtoupper($currency);
 		if ($currency == null)
 		{
 			$this->getAllExchange();
 		}
-		else if(strlen($this->currentCurency) == 3 && array_key_exists($this->currentCurency, $this->Currency))
+		else if(strlen($currency) == 3 && array_key_exists(strtoupper($currency), $this->Currency))
 		{
-			$this->getExchangeBy($currency);
+			$this->currentCurency = strtoupper($currency);
+			$this->getExchangeBy($this->currentCurency);
 		}
 	}
 
 	private function getAllExchange()
 	{
-		$botHTML = $this->curlGet(self::BOT_HOST . $this->rateUrl);
+		$botHTML = $this->curlGet(self::BOT_HOST . self::RATE_URL);
 
 		$resint1 = preg_match('/id ?= ?["|\']DownloadCsv["|\'] ?.*>/', $botHTML, $match1);
 		if ($resint1 !== 0)
@@ -160,7 +162,7 @@ class NTDExchangeRate
 		}
 		else
 		{
-			$this->exchangeData = $this->convertAllCsv($csvOutput);
+			$this->exchangeData = $this->convertCsv($csvOutput);
 		}
 		$botHTML = $csvOutput = null;
 		$this->generateExchange();
@@ -170,10 +172,9 @@ class NTDExchangeRate
 	{
 		$pastDay = date("Ymd", mktime(0, 0, 0, date("m"), date("d") - $this->past, date("Y")));
 		$today = date("Ymd");
-		$pastCSVUrl = sprintf( self::BOT_HOST . $this->historyUrl, $currency, $pastDay, $today);
+		$pastCSVUrl = sprintf( self::BOT_HOST . self::HISTORY_CSV, $currency, $pastDay, $today);
 		$csvOutput = $this->curlGet($pastCSVUrl);
-		$this->exchangeData = $this->convertAllCsv($csvOutput);
-		// print_r($this->exchangeData[0]['date']);
+		$this->exchangeData = $this->convertCsv($csvOutput);
 		$this->generateExchange();
 	}
 
@@ -181,7 +182,7 @@ class NTDExchangeRate
 	 * convert Exchange Rate Csv to array
 	 * @return array
 	 */
-	private function convertAllCsv($csv)
+	private function convertCsv($csv)
 	{
 		$result;
 		$wholeCSV = str_getcsv($csv, "\n");
@@ -205,7 +206,7 @@ class NTDExchangeRate
 	}
 
 	/**
-	 * read web data
+	 * get web data
 	 * @param  string $url
 	 * @return string $output
 	 */
@@ -213,7 +214,7 @@ class NTDExchangeRate
 	{
 		$ch = curl_init();
 		$options = array(
-			CURLOPT_URL => htmlspecialchars_decode($url),
+			CURLOPT_URL => htmlspecialchars_decode($url), 
 			CURLOPT_HEADER => false,
 			CURLOPT_RETURNTRANSFER => true,
 			CURLOPT_USERAGENT => "Google Bot",
@@ -225,7 +226,7 @@ class NTDExchangeRate
 		curl_close($ch);
 		if ($error)
 		{
-			$this->printError('CURL_ERROR', $error);
+			$this->printError('CURL_ERROR', (String)$error);
 		}
 		else
 		{
@@ -236,24 +237,27 @@ class NTDExchangeRate
 	/**
 	 * Print Error
 	 * @param  String $err  Error String type
-	 * @param  String $info deisplay error information , default is null
+	 * @param  String $info deisplay error information , default is empty
 	 */
-	private function printError($err, $info = null)
+	private function printError($err, $info = '')
 	{
+		$displayErr = '';
 		switch ($err) {
 			case 'CURL_ERROR':
-				print_r('Curl Error: empty');
+				$displayErr = 'Fetch Error';
 				break;
 			case 'NO_MATCH_HREF':
-				print_r('Match Error: not match download href');
+				$displayErr = 'Match Error: not match download link';
 				break;
 			case 'NO_MATCH_ELEMENT':
-				print_r('Match Error: not match element');
+				$displayErr = 'Match Error: not match element';
 				break;
 			case 'NO_RESULT':
-				# code...
+				$displayErr = 'Fetch data is Empty';
 				break;
 		}
+		$this->generateError($displayErr . ' ' . $info);
+		$this->pxml();
 		exit;
 	}
 
@@ -265,18 +269,37 @@ class NTDExchangeRate
 		return html_entity_decode($this->emo[$symbol], ENT_NOQUOTES, 'UTF-8');
 	}
 
+	private function formateDate($date)
+	{
+		$d = DateTime::createFromFormat('Ymd', $date);
+		return $d->format('Y-m-d');
+	}
+
+	private function formatePrice($price)
+	{
+		return (float)$price == 0 ? '-' :  (float)$price;
+	}
+
+	private function comparehHistory($key)
+	{
+		if ($key < count($this->exchangeData) - 1) {
+			return ((float)$this->exchangeData[$key]['Selling'][0] > (float)$this->exchangeData[$key + 1]['Selling'][0]) ? $this->emoji('up') : $this->emoji('down');
+		}
+	}
+	/**
+	 * generate Exchange Rate to $this->outputItems for Alfred output
+	 */
 	private function generateExchange(){
-		if ($this->currentCurency == null) 
+		$ind = 0;
+		if ($this->currentCurency == null)
 		{
 			foreach ($this->exchangeData as $key => $val)
 			{
-				$SellingPrice = ((float)$val['Selling'][0] == 0 ? '-' :  (float)$val['Selling'][0]);
-				$BuyingPrice = ((float)$val['Buying'][0] == 0 ? '-' :  (float)$val['Buying'][0]);
 				$this->outputItems[] = array(
-					'uid'      => $key,
-					'arg'      => $key,
-					'title'    => $SellingPrice,
-					'subtitle' => $this->Currency[$key]['name'] . ' ' . $key .' | 現金賣出：'. $SellingPrice .' 現金買入：'. $BuyingPrice,
+					'uid'      => $ind ++,
+					'arg'      => $this->formatePrice($val['Selling'][0]),
+					'title'    => $this->formatePrice($val['Selling'][0]),
+					'subtitle' => $this->Currency[$key]['name'] . ' ' . $key .' | 現金賣出：'. $this->formatePrice($val['Selling'][0]) .' 現金買入：'. $this->formatePrice($val['Buying'][0]),
 					'icon'     => 'flags/' . $this->Currency[$key]['flag']
 				);
 			}
@@ -286,10 +309,10 @@ class NTDExchangeRate
 			foreach ($this->exchangeData as $key => $val)
 			{
 				$this->outputItems[] = array(
-					'uid'      => $this->currentCurency,
-					'arg'      => $this->currentCurency,
-					'title'    => $val['Selling'][0],
-					'subtitle' => $val['date'],
+					'uid'      => $ind ++,
+					'arg'      => sprintf(self::BOT_HOST . self::HISTORY_LINK, $this->currentCurency),
+					'title'    => $this->comparehHistory($key) . ' ' . $this->formatePrice($val['Selling'][0]),
+					'subtitle' => $this->formateDate($val['date']),
 					'icon'     => 'flags/' . $this->Currency[$this->currentCurency]['flag']
 				);
 			}
@@ -298,7 +321,13 @@ class NTDExchangeRate
 	}
 
 	private function generateError($err){
-
+		$this->outputItems[] = array(
+			'uid'      => '0',
+			'arg'      => $err,
+			'title'    => $err,
+			'subtitle' => '',
+			'icon'     => 'icon.png'
+		);
 	}
 
 	/**
