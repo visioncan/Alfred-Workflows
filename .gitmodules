@@ -1,0 +1,6 @@
+[submodule "NTDExchangeRate/libs/Workflows"]
+	path = NTDExchangeRate/libs/Workflows
+	url = https://github.com/jdfwarrior/Workflows.git
+[submodule "NTDExchangeRate/libs/nokogiri"]
+	path = NTDExchangeRate/libs/nokogiri
+	url = https://github.com/olamedia/nokogiri
