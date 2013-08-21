@@ -5,13 +5,14 @@
 * 
 * Author: visioncan@gmail.com
 * web: http://blog.visioncan.com/
-* Version 1.0
+* Version 1.1
 * 
 * Flag icons made by www.IconDrawer.com
 * Workflows Library by David Ferguson (@jdfwarrior)
 * 
 */
-require_once('libs/workflows.php');
+require_once('libs/Workflows/workflows.php');
+require_once('libs/nokogiri/nokogiri.php');
 
 class NTDExchangeRate
 {
@@ -22,6 +23,7 @@ class NTDExchangeRate
 	private $csvDate;               //date of exchange rate
 	private $exchangeData;
 	private $workflows;
+	private $saw;
 	private $past = 9;              // exchange rate at the number of days in the past
 	private $currentCurency = null;
 	private $outputItems = array(); // for Alfred
@@ -132,25 +134,19 @@ class NTDExchangeRate
 	private function getAllExchange()
 	{
 		$botHTML = $this->curlGet(self::BOT_HOST . self::RATE_URL);
-
-		$resint1 = preg_match('/id ?= ?["|\']DownloadCsv["|\'] ?.*>/', $botHTML, $match1);
-		if ($resint1 !== 0)
-		{
-			$resint2 = preg_match('/\.href ?= ?\'(.+)\'/', $match1[0], $match2);
-			if ($resint1 !== 0)
-			{
-				$csvUrl = $match2[1];
-			}
-			else
-			{
-				$this->printError('NO_MATCH_HREF');
-			}
-		}
-		else
-		{
+		
+		$this->saw = nokogiri::fromHtml($botHTML);
+		$downloadDOM = $this->saw->get('#DownloadCsv')->toArray();
+		
+		if( empty($downloadDOM) ) {
 			$this->printError('NO_MATCH_ELEMENT');
 		}
-		
+
+		if( preg_match('/\.href ?= ?\'(.+)\'/', $downloadDOM[0]['onclick'], $match) ) {
+			$csvUrl = $match[1];
+		}else {
+			$this->printError('NO_MATCH_HREF');
+		}
 		//date
 		preg_match('/date=(.*):/', $csvUrl, $match_date);
 		$this->csvDate = preg_replace('/T/', ' ', $match_date[1]);
