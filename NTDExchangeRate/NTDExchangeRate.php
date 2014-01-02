@@ -5,7 +5,10 @@
 * 
 * Author: visioncan@gmail.com
 * web: http://blog.visioncan.com/
-* Version 1.1
+* Version 1.1.1
+*
+* changeLog: 
+* v1.1.1 : fix download link miss
 * 
 * Flag icons made by www.IconDrawer.com
 * Workflows Library by David Ferguson (@jdfwarrior)
@@ -137,13 +140,13 @@ class NTDExchangeRate
 		
 		$this->saw = nokogiri::fromHtml($botHTML);
 		$downloadDOM = $this->saw->get('#DownloadCsv')->toArray();
-		
+
 		if( empty($downloadDOM) ) {
 			$this->printError('NO_MATCH_ELEMENT');
 		}
 
-		if( preg_match('/\.href ?= ?\'(.+)\'/', $downloadDOM[0]['onclick'], $match) ) {
-			$csvUrl = $match[1];
+		if( array_key_exists('href', $downloadDOM[0]) ) {
+			$csvUrl = $downloadDOM[0]['href'];
 		}else {
 			$this->printError('NO_MATCH_HREF');
 		}
