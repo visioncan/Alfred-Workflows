@@ -6,3 +6,5 @@ config.rb
 note.TODO
 test
 *.psd
+SkypeHiddenEmoticons
+node_modules
