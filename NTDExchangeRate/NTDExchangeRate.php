@@ -5,10 +5,11 @@
 * 
 * Author: visioncan@gmail.com
 * web: http://blog.visioncan.com/
-* Version 1.1.1
+* Version 1.2.0
 *
 * changeLog: 
 * v1.1.1 : fix download link miss
+* v1.2.0 : Download csv directly
 * 
 * Flag icons made by www.IconDrawer.com
 * Workflows Library by David Ferguson (@jdfwarrior)
@@ -16,118 +17,33 @@
 */
 require_once('libs/Workflows/workflows.php');
 require_once('libs/nokogiri/nokogiri.php');
+require_once('Utils.php');
 
 class NTDExchangeRate
 {
-  const BOT_HOST   = 'http://rate.bot.com.tw';
-  const RATE_URL = '/Pages/Static/UIP003.zh-TW.htm';
-  const HISTORY_CSV = '/Pages/UIP004/Download0042.ashx?lang=zh-TW&fileType=1&afterOrNot=0&whom=%s&date1=%s&date2=%s';
-  const HISTORY_LINK = '/Pages/UIP004/UIP004INQ1.aspx?lang=zh-TW&whom3=%s';
-  private $csvDate;               //date of exchange rate
+  const BOT_HOST             = 'http://rate.bot.com.tw';
+  const CSV_URL              = '/xrt/flcsv/0/day';
+  const LAST_3_MONTH_CSV_URL = '/xrt/flcsv/0/L3M/%s';
+  const HISTORY_LINK         = '/xrt/history/%s';
+  const LIST_HISTORY_LIMIT   = 10;
+
   private $exchangeData;
   private $workflows;
-  private $saw;
-  private $past = 9;              // exchange rate at the number of days in the past
   private $currentCurency = null;
+  private $updateTime = '';
   private $outputItems = array(); // for Alfred
-  private $Currency = array(
-    'AUD' => array(
-      'name' => '澳幣',
-      'flag' => 'Australia.png'
-    ),
-    'CAD' => array(
-      'name' => '加拿大幣',
-      'flag' => 'Canada.png'
-    ),
-    'CHF' => array(
-      'name' => '瑞士法郎',
-      'flag' => 'Switzerland.png'
-    ),
-    'CNY' => array(
-      'name' => '人民幣',
-      'flag' => 'China.png'
-    ),
-    'EUR' => array(
-      'name' => '歐元',
-      'flag' => 'European-Union.png'
-    ),
-    'GBP' => array(
-      'name' => '英鎊',
-      'flag' => 'United-Kingdom(Great-Britain).png'
-    ),
-    'HKD' => array(
-      'name' => '港幣',
-      'flag' => 'Hong-Kong.png'
-    ),
-    'IDR' => array(
-      'name' => '印尼幣',
-      'flag' => 'Indonezia.png'
-    ),
-    'JPY' => array(
-      'name' => '日圓',
-      'flag' => 'Japan.png'
-    ),
-    'KRW' => array(
-      'name' => '韓元',
-      'flag' => 'South-Korea.png'
-    ),
-    'MYR' => array(
-      'name' => ' 馬來幣',
-      'flag' => 'Malaysia.png'
-    ),
-    'NZD' => array(
-      'name' => '紐元',
-      'flag' => 'New-Zealand.png'
-    ),
-    'PHP' => array(
-      'name' => '菲國比索',
-      'flag' => 'Philippines.png'
-    ),
-    'SEK' => array(
-      'name' => '瑞典幣',
-      'flag' => 'Sweden.png'
-    ),
-    'SGD' => array(
-      'name' => '新加坡幣',
-      'flag' => 'Singapore.png'
-    ),
-    'THB' => array(
-      'name' => '泰銖',
-      'flag' => 'Thailand.png'
-    ),
-    'USD' => array(
-      'name' => '美金',
-      'flag' => 'United-States-of-America(USA).png'
-    ),
-    'VND' => array(
-      'name' => '越南盾',
-      'flag' => 'Viet-Nam.png'
-    ),
-    'ZAR' => array(
-      'name' => '南非幣',
-      'flag' => 'South-Africa.png'
-    ),
-    'NTD' => array(
-      'name' => '新台幣',
-      'flag' => 'Taiwan.png'
-    )
-  );
-
-  //HTML Entity (hex)
-  private $emo = array(
-    'up' => '&#x1f53c;',
-    'down' => '&#x1f53d;'
-  );
 
   public function __construct($currency = null)
   {
     date_default_timezone_set('Asia/Taipei');
+    mb_internal_encoding('UTF-8');
+
     $this->workflows = new Workflows();
     if ($currency == null)
     {
       $this->getAllExchange();
     }
-    else if(strlen($currency) == 3 && array_key_exists(strtoupper($currency), $this->Currency))
+    else if(Utils::isCurrencyAvaiable($currency))
     {
       $this->currentCurency = strtoupper($currency);
       $this->getExchangeBy($this->currentCurency);
@@ -135,46 +51,29 @@ class NTDExchangeRate
   }
 
   private function getAllExchange()
-  {
-    $botHTML = $this->curlGet(self::BOT_HOST . self::RATE_URL);
+  {    
+    $csv = Utils::fetchCSV(self::BOT_HOST.self::CSV_URL);
     
-    $this->saw = nokogiri::fromHtml($botHTML);
-    $downloadDOM = $this->saw->get('#DownloadCsv')->toArray();
-
-    if( empty($downloadDOM) ) {
-      $this->printError('NO_MATCH_ELEMENT');
-    }
-
-    if( array_key_exists('href', $downloadDOM[0]) ) {
-      $csvUrl = $downloadDOM[0]['href'];
-    }else {
-      $this->printError('NO_MATCH_HREF');
-    }
-    //date
-    preg_match('/date=(.*):/', $csvUrl, $match_date);
-    $this->csvDate = preg_replace('/T/', ' ', $match_date[1]);
-
-    //get csv and convert
-    $csvOutput = $this->curlGet(self::BOT_HOST . $csvUrl);
-    if ($csvOutput == '很抱歉，本次查詢找不到任何一筆資料！')
-    {
+    if (mb_substr($csv['raw'], 1, 5) !== '幣別,匯率') {
       $this->printError('NO_RESULT', $csvOutput);
+      return;
     }
-    else
-    {
-      $this->exchangeData = $this->convertCsv($csvOutput);
-    }
-    $botHTML = $csvOutput = null;
+
+    $this->updateTime = $csv['updateTime'];
+    $this->exchangeData = $this->convertCsv($csv['raw']);
     $this->generateExchange();
   }
 
   private function getExchangeBy($currency)
-  {
-    $pastDay = date("Ymd", mktime(0, 0, 0, date("m"), date("d") - $this->past, date("Y")));
-    $today = date("Ymd");
-    $pastCSVUrl = sprintf( self::BOT_HOST . self::HISTORY_CSV, $currency, $pastDay, $today);
-    $csvOutput = $this->curlGet($pastCSVUrl);
-    $this->exchangeData = $this->convertCsv($csvOutput);
+  { 
+    $csv = Utils::fetchCSV(sprintf(self::BOT_HOST.self::LAST_3_MONTH_CSV_URL, $currency));
+    
+    if (mb_substr($csv['raw'], 1, 7) !== '資料日期,幣別') {
+      $this->printError('NO_RESULT', $csvOutput);
+      return;
+    }
+
+    $this->exchangeData = $this->convertCsv($csv['raw']);
     $this->generateExchange();
   }
 
@@ -186,6 +85,7 @@ class NTDExchangeRate
   {
     $result;
     $wholeCSV = str_getcsv($csv, "\n");
+
     for ($i = 1; $i < sizeof($wholeCSV); $i++) { 
       $row = explode(",", preg_replace('/\s+/', '', $wholeCSV[$i]));
       if ($this->currentCurency == null) {
@@ -200,38 +100,8 @@ class NTDExchangeRate
           'Selling' => array_slice($row, 12, 9)
         );
       }
-      
     }
     return $result;
-  }
-
-  /**
-   * get web data
-   * @param  string $url
-   * @return string $output
-   */
-  private function curlGet($url)
-  {
-    $ch = curl_init();
-    $options = array(
-      CURLOPT_URL => htmlspecialchars_decode($url), 
-      CURLOPT_HEADER => false,
-      CURLOPT_RETURNTRANSFER => true,
-      CURLOPT_USERAGENT => "Google Bot",
-      CURLOPT_FOLLOWLOCATION => true
-    );
-    curl_setopt_array($ch, $options);
-    $output = curl_exec($ch);
-    $error  = curl_error($ch);
-    curl_close($ch);
-    if ($error)
-    {
-      $this->printError('CURL_ERROR', (String)$error);
-    }
-    else
-    {
-      return $output;
-    }
   }
 
   /**
@@ -246,12 +116,6 @@ class NTDExchangeRate
       case 'CURL_ERROR':
         $displayErr = 'Fetch Error';
         break;
-      case 'NO_MATCH_HREF':
-        $displayErr = 'Match Error: not match download link';
-        break;
-      case 'NO_MATCH_ELEMENT':
-        $displayErr = 'Match Error: not match element';
-        break;
       case 'NO_RESULT':
         $displayErr = 'Fetch data is Empty';
         break;
@@ -262,30 +126,19 @@ class NTDExchangeRate
   }
 
   /**
-   * @return string return ios emoji
+   * compare rate history with before the day
+   * @param  Number $key index
+   * @return Emoji String
    */
-  private function emoji($symbol)
-  {
-    return html_entity_decode($this->emo[$symbol], ENT_NOQUOTES, 'UTF-8');
-  }
-
-  private function formateDate($date)
-  {
-    $d = DateTime::createFromFormat('Ymd', $date);
-    return $d->format('Y-m-d');
-  }
-
-  private function formatePrice($price)
-  {
-    return (float)$price == 0 ? '-' :  (float)$price;
-  }
-
-  private function comparehHistory($key)
+  private function compareHistory($key)
   {
     if ($key < count($this->exchangeData) - 1) {
-      return ((float)$this->exchangeData[$key]['Selling'][0] > (float)$this->exchangeData[$key + 1]['Selling'][0]) ? $this->emoji('up') : $this->emoji('down');
+      $old = (float)$this->exchangeData[$key]['Selling'][0];
+      $new = (float)$this->exchangeData[$key + 1]['Selling'][0];
+      return $old > $new ? Utils::EMOJI_UP() : Utils::EMOJI_DOWN();
     }
   }
+
   /**
    * generate Exchange Rate to $this->outputItems for Alfred output
    */
@@ -295,12 +148,19 @@ class NTDExchangeRate
     {
       foreach ($this->exchangeData as $key => $val)
       {
+        $sellingPrice = Utils::price($val['Selling'][0]);
+        $buyingPrice = Utils::price($val['Buying'][0]);
         $this->outputItems[] = array(
           'uid'      => $ind ++,
-          'arg'      => $this->formatePrice($val['Selling'][0]),
-          'title'    => $this->formatePrice($val['Selling'][0]),
-          'subtitle' => $this->Currency[$key]['name'] . ' ' . $key .' | 現金賣出：'. $this->formatePrice($val['Selling'][0]) .' 現金買入：'. $this->formatePrice($val['Buying'][0]),
-          'icon'     => 'flags/' . $this->Currency[$key]['flag']
+          'arg'      => $sellingPrice,
+          'title'    => $sellingPrice,
+          'subtitle' => sprintf('%s %s | 現金賣出：%s 現金買入：%s | 掛牌時間：%s',
+            Utils::currencyName($key),
+            $key,
+            $sellingPrice,
+            $buyingPrice,
+            $this->updateTime),
+          'icon'     => 'flags/'.Utils::currencyFlag($key)
         );
       }
     }
@@ -308,16 +168,18 @@ class NTDExchangeRate
     {
       foreach ($this->exchangeData as $key => $val)
       {
+        $linkURL = sprintf(self::BOT_HOST.self::HISTORY_LINK, $this->currentCurency);
         $this->outputItems[] = array(
           'uid'      => $ind ++,
-          'arg'      => sprintf(self::BOT_HOST . self::HISTORY_LINK, $this->currentCurency),
-          'title'    => $this->comparehHistory($key) . ' ' . $this->formatePrice($val['Selling'][0]),
-          'subtitle' => $this->formateDate($val['date']),
-          'icon'     => 'flags/' . $this->Currency[$this->currentCurency]['flag']
+          'arg'      => $linkURL,
+          'title'    => $this->compareHistory($key).' '.Utils::price($val['Selling'][0]),
+          'subtitle' => Utils::formateDate($val['date']),
+          'icon'     => 'flags/' . Utils::currencyFlag($this->currentCurency)
         );
+
+        if ($ind == self::LIST_HISTORY_LIMIT) break;
       }
     }
-    
   }
 
   private function generateError($err){
